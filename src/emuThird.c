@@ -246,11 +246,13 @@ Evdev3BEmuFilterTouchEvent(InputInfoPtr pInfo, unsigned int id, uint16_t val, Va
             {
                 xf86PostTouchEvent(pInfo->dev, 0, XI_TouchBegin, 0, emu3B->mask);
                 Evdev3BCancel(pInfo);
-            }
-	    else
-	    {
- 	        ret = TRUE;
 	    }
+	    else if (id == 0 && val != XI_TouchEnd)
+	    {
+	        Evdev3BEmuProcessAbsMotion(pInfo, mask);
+		if (emu3B->state != EM3B_OFF)
+		    ret = TRUE;
+            }
             break;
         case EM3B_EMULATING:
             /* We're emulating. Suppress further id 0 events. */
