@@ -964,6 +964,11 @@ static void EvdevPostQueuedEvents(InputInfoPtr pInfo)
             break;
 #ifdef MULTITOUCH
         case EV_QUEUE_TOUCH:
+	    if (Evdev3BEmuFilterTouchEvent(pInfo,
+					   pEvdev->queue[i].detail.touch,
+					   pEvdev->queue[i].val,
+					   pEvdev->queue[i].touchMask))
+		break;
             xf86PostTouchEvent(pInfo->dev, pEvdev->queue[i].detail.touch,
                                pEvdev->queue[i].val, 0,
                                pEvdev->queue[i].touchMask);
@@ -2670,7 +2675,7 @@ EvdevPreInit(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
                                          pInfo->type_name);
     pInfo->type_name = pEvdev->type_name;
 
-    if (pEvdev->flags & EVDEV_BUTTON_EVENTS)
+    //if (pEvdev->flags & EVDEV_BUTTON_EVENTS)
     {
         EvdevMBEmuPreInit(pInfo);
         Evdev3BEmuPreInit(pInfo);

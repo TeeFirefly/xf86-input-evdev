@@ -207,6 +207,8 @@ typedef struct {
         int                 delta[2];    /* delta x/y, accumulating */
         int                 startpos[2]; /* starting pos for abs devices */
         int                 flags;       /* remember if we had rel or abs movement */
+        int                 in_touch;    /* is in touch mode */
+        ValuatorMask       *mask;
     } emulate3B;
     struct {
 	int                 meta;           /* meta key to lock any button */
@@ -281,6 +283,7 @@ void EvdevMBEmuFinalize(InputInfoPtr);
 /* Third button emulation */
 CARD32 Evdev3BEmuTimer(OsTimerPtr timer, CARD32 time, pointer arg);
 BOOL Evdev3BEmuFilterEvent(InputInfoPtr, int, BOOL);
+BOOL Evdev3BEmuFilterTouchEvent(InputInfoPtr pInfo, unsigned int id, uint16_t val, ValuatorMask *mask);
 void Evdev3BEmuPreInit(InputInfoPtr pInfo);
 void Evdev3BEmuOn(InputInfoPtr);
 void Evdev3BEmuFinalize(InputInfoPtr);

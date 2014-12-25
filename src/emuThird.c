@@ -94,6 +94,8 @@ Evdev3BEmuTimer(OsTimerPtr timer, CARD32 time, pointer arg)
     sigstate = xf86BlockSIGIO ();
     emu3B->state = EM3B_EMULATING;
     Evdev3BEmuPostButtonEvent(pInfo, emu3B->button, BUTTON_PRESS);
+    if (emu3B->in_touch)
+        Evdev3BEmuPostButtonEvent(pInfo, emu3B->button, BUTTON_RELEASE);
     xf86UnblockSIGIO (sigstate);
     return 0;
 }
@@ -189,11 +191,78 @@ Evdev3BEmuFilterEvent(InputInfoPtr pInfo, int button, BOOL press)
 
     if (press && emu3B->state == EM3B_OFF)
     {
+	emu3B->in_touch = 0;
         emu3B->state = EM3B_PENDING;
         emu3B->timer = TimerSet(emu3B->timer, 0, emu3B->timeout,
                                 Evdev3BEmuTimer, pInfo);
         ret = TRUE;
         goto out;
+    }
+
+out:
+    return ret;
+}
+
+/**
+ * Emulate a third button on touch event.
+ *
+ * Return TRUE if event was swallowed by third button emulation,
+ * FALSE otherwise.
+ */
+BOOL
+Evdev3BEmuFilterTouchEvent(InputInfoPtr pInfo, unsigned int id, uint16_t val, ValuatorMask *mask)
+{
+    EvdevPtr          pEvdev = pInfo->private;
+    struct emulate3B *emu3B  = &pEvdev->emulate3B;
+    int               ret    = FALSE;
+
+    if (!emu3B->enabled)
+        goto out;
+
+    if (val == XI_TouchEnd)
+        emu3B->buttonstate &= ~(1<<id);
+    else
+        emu3B->buttonstate |= (1<<id);
+
+    switch (emu3B->state)
+    {
+        case EM3B_OFF:
+            if (id == 0 && val == XI_TouchBegin)
+            {
+	        Evdev3BEmuProcessAbsMotion(pInfo, mask);
+                emu3B->in_touch = 1;
+                emu3B->state = EM3B_PENDING;
+                emu3B->timer = TimerSet(emu3B->timer, 0, emu3B->timeout,
+                                        Evdev3BEmuTimer, pInfo);
+		valuator_mask_copy(emu3B->mask, mask);
+		ret = TRUE;
+            }
+            break;
+        case EM3B_PENDING:
+            /* Any other touch id pressed or id 0 released? Cancel timer */
+            if (id != 0 
+                || ((emu3B->buttonstate & ~0x1) != 0)
+                || val == XI_TouchEnd)
+            {
+                xf86PostTouchEvent(pInfo->dev, 0, XI_TouchBegin, 0, emu3B->mask);
+                Evdev3BCancel(pInfo);
+            }
+	    else
+	    {
+ 	        ret = TRUE;
+	    }
+            break;
+        case EM3B_EMULATING:
+            /* We're emulating. Suppress further id 0 events. */
+            if (id == 0)
+            {
+                if (val == XI_TouchEnd)
+                    Evdev3BCancel(pInfo);
+                ret = TRUE;
+            }
+            break;
+        default:
+            break;
     }
 
 out:
@@ -212,6 +281,9 @@ Evdev3BEmuProcessAbsMotion(InputInfoPtr pInfo, ValuatorMask *vals)
     int               cancel = FALSE;
     int               axis   = 0;
 
+    if ((emu3B->flags & EVDEV_ABSOLUTE_EVENTS) == 0)
+        emu3B->flags |= EVDEV_ABSOLUTE_EVENTS;
+
     if (emu3B->state != EM3B_PENDING)
     {
         if (valuator_mask_isset(vals, 0))
@@ -221,9 +293,6 @@ Evdev3BEmuProcessAbsMotion(InputInfoPtr pInfo, ValuatorMask *vals)
 
         return;
     }
-
-    if ((emu3B->flags & EVDEV_ABSOLUTE_EVENTS) == 0)
-        emu3B->flags |= EVDEV_ABSOLUTE_EVENTS;
 
     while (axis <= 1 && !cancel)
     {
@@ -238,7 +307,10 @@ Evdev3BEmuProcessAbsMotion(InputInfoPtr pInfo, ValuatorMask *vals)
 
     if (cancel)
     {
-        Evdev3BEmuPostButtonEvent(pInfo, 1, BUTTON_PRESS);
+        if (emu3B->in_touch)
+	    xf86PostTouchEvent(pInfo->dev, 0, XI_TouchBegin, 0, emu3B->mask);
+        else
+	    Evdev3BEmuPostButtonEvent(pInfo, 1, BUTTON_PRESS);
         Evdev3BCancel(pInfo);
     }
 }
@@ -289,6 +361,7 @@ Evdev3BEmuPreInit(InputInfoPtr pInfo)
                                          DEFAULT_MOVE_THRESHOLD);
     /* allocate now so we don't allocate in the signal handler */
     emu3B->timer = TimerSet(NULL, 0, 0, NULL, NULL);
+    emu3B->mask = valuator_mask_new(MAX_VALUATORS);
 }
 
 void
@@ -305,6 +378,8 @@ Evdev3BEmuFinalize(InputInfoPtr pInfo)
 
     TimerFree(emu3B->timer);
     emu3B->timer = NULL;
+    valuator_mask_free(&emu3B->mask);
+    emu3B->mask = NULL;
 }
 
 static int
