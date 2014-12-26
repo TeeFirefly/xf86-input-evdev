@@ -94,7 +94,7 @@ Evdev3BEmuTimer(OsTimerPtr timer, CARD32 time, pointer arg)
     sigstate = xf86BlockSIGIO ();
     emu3B->state = EM3B_EMULATING;
     Evdev3BEmuPostButtonEvent(pInfo, emu3B->button, BUTTON_PRESS);
-    if (emu3B->in_touch)
+    if (emu3B->is_touch)
         Evdev3BEmuPostButtonEvent(pInfo, emu3B->button, BUTTON_RELEASE);
     xf86UnblockSIGIO (sigstate);
     return 0;
@@ -191,7 +191,7 @@ Evdev3BEmuFilterEvent(InputInfoPtr pInfo, int button, BOOL press)
 
     if (press && emu3B->state == EM3B_OFF)
     {
-	emu3B->in_touch = 0;
+	emu3B->is_touch = 0;
         emu3B->state = EM3B_PENDING;
         emu3B->timer = TimerSet(emu3B->timer, 0, emu3B->timeout,
                                 Evdev3BEmuTimer, pInfo);
@@ -215,48 +215,57 @@ Evdev3BEmuFilterTouchEvent(InputInfoPtr pInfo, unsigned int id, uint16_t val, Va
     EvdevPtr          pEvdev = pInfo->private;
     struct emulate3B *emu3B  = &pEvdev->emulate3B;
     int               ret    = FALSE;
+    int               id_mask;
 
-    if (!emu3B->enabled)
+    if (!emu3B->enabled || id < 0)
         goto out;
 
+    id_mask = 1 << id;
     if (val == XI_TouchEnd)
-        emu3B->buttonstate &= ~(1<<id);
+        emu3B->buttonstate &= ~id_mask;
     else
-        emu3B->buttonstate |= (1<<id);
+        emu3B->buttonstate |= id_mask;
 
     switch (emu3B->state)
     {
         case EM3B_OFF:
-            if (id == 0 && val == XI_TouchBegin)
+	    /* first touch id is the main id */
+            if (val == XI_TouchBegin &&
+		(emu3B->buttonstate & ~id_mask) == 0)
             {
+		emu3B->touch_id = id;
+                emu3B->is_touch = 1;
+		/* before switch to pending state, update the startpos */
 	        Evdev3BEmuProcessAbsMotion(pInfo, mask);
-                emu3B->in_touch = 1;
-                emu3B->state = EM3B_PENDING;
+		valuator_mask_copy(emu3B->mask, mask);
                 emu3B->timer = TimerSet(emu3B->timer, 0, emu3B->timeout,
                                         Evdev3BEmuTimer, pInfo);
-		valuator_mask_copy(emu3B->mask, mask);
+                emu3B->state = EM3B_PENDING;
 		ret = TRUE;
             }
             break;
         case EM3B_PENDING:
-            /* Any other touch id pressed or id 0 released? Cancel timer */
-            if (id != 0 
-                || ((emu3B->buttonstate & ~0x1) != 0)
+            /* Any other touch id pressed or main id released? Cancel timer */
+            if (id != emu3B->touch_id
                 || val == XI_TouchEnd)
             {
-                xf86PostTouchEvent(pInfo->dev, 0, XI_TouchBegin, 0, emu3B->mask);
+                xf86PostTouchEvent(pInfo->dev, emu3B->touch_id,
+				   XI_TouchBegin, 0, emu3B->mask);
                 Evdev3BCancel(pInfo);
 	    }
-	    else if (id == 0 && val != XI_TouchEnd)
+	    else
 	    {
 	        Evdev3BEmuProcessAbsMotion(pInfo, mask);
-		if (emu3B->state != EM3B_OFF)
+		if (emu3B->state == EM3B_OFF)
+		    xf86PostTouchEvent(pInfo->dev, emu3B->touch_id, XI_TouchBegin, 0, emu3B->mask);
+		else
+		    /* keep suppressing if still in pending state */
 		    ret = TRUE;
             }
             break;
         case EM3B_EMULATING:
-            /* We're emulating. Suppress further id 0 events. */
-            if (id == 0)
+            /* We're emulating. Suppress further main id events. */
+            if (id == emu3B->touch_id)
             {
                 if (val == XI_TouchEnd)
                     Evdev3BCancel(pInfo);
@@ -309,9 +318,7 @@ Evdev3BEmuProcessAbsMotion(InputInfoPtr pInfo, ValuatorMask *vals)
 
     if (cancel)
     {
-        if (emu3B->in_touch)
-	    xf86PostTouchEvent(pInfo->dev, 0, XI_TouchBegin, 0, emu3B->mask);
-        else
+        if (!emu3B->is_touch)
 	    Evdev3BEmuPostButtonEvent(pInfo, 1, BUTTON_PRESS);
         Evdev3BCancel(pInfo);
     }

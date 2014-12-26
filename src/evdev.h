@@ -207,8 +207,9 @@ typedef struct {
         int                 delta[2];    /* delta x/y, accumulating */
         int                 startpos[2]; /* starting pos for abs devices */
         int                 flags;       /* remember if we had rel or abs movement */
-        int                 in_touch;    /* is in touch mode */
-        ValuatorMask       *mask;
+        int                 is_touch;    /* is in touch mode */
+        int                 touch_id;    /* touch id */
+        ValuatorMask       *mask;	 /* mask of first touch */
     } emulate3B;
     struct {
 	int                 meta;           /* meta key to lock any button */
